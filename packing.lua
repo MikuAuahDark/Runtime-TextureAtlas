@@ -70,7 +70,7 @@ grid.insert = function(self, width, height, data)
     -- cell is big enough to fit but needs cutting down to size
     elseif unoccupiedCell.w > width and unoccupiedCell.h > height then
       -- pick best direction to cut
-      if width > height then
+      if unoccupiedCell.h > unoccupiedCell.w then
         insert(self.unoccupiedCells, cell.new(unoccupiedCell.x+width, unoccupiedCell.y, unoccupiedCell.w-width, height)) -- right
         insert(self.unoccupiedCells, cell.new(unoccupiedCell.x, unoccupiedCell.y+height, unoccupiedCell.w, unoccupiedCell.h-height)) -- bottom
       else
@@ -92,6 +92,7 @@ grid.insert = function(self, width, height, data)
   -- no unoccupied cells suitable, create new cell
   
   -- score edge placement to find cheapest grow cost
+    -- score is equal to the number of pixels that have to be newly claimed
   local overhangBottom = width - self.currentWidth -- over hang cost
   if overhangBottom > 0 then
     overhangBottom = self.currentHeight * overhangBottom
@@ -107,29 +108,29 @@ grid.insert = function(self, width, height, data)
     overhangRight = 0
   end
   local rightScore = (height > self.currentHeight and height or self.currentHeight) * width + overhangRight
-  
-  -- Score trying to be placed slightly within an edge cell
+
+  -- Score trying to be placed indented within an edge cell
   local edgeScore, celledgeTbl = math.huge, nil
   for _, edgeTable in ipairs(edgeCells) do
     local cell = edgeTable[1]
     if overhangRight == 0 and edgeTable.right then -- if over hang, don't handle it here
-      local newWidth = width - cell.w
       -- limits
-      if self.currentWidth + newWidth > self.limitWidth then
+      if cell.x + width > self.limitWidth or
+        (edgeTable.bottom and cell.y + height > self.limitHeight) then
         goto continue -- cannot fit here
       end
-      local score = self.currentHeight * newWidth
+      local score = self.currentHeight * (width - cell.w)
       if edgeScore > score then
         edgeScore = score
         celledgeTbl = edgeTable
       end
     elseif overhangBottom == 0 and edgeTable.bottom then
-      local newHeight = height - cell.h
       -- limits
-      if self.currentHeight + newHeight > self.limitHeight then
+      if cell.y + height > self.limitHeight or
+        (edgeTable.right and cell.x + width > self.limitWidth) then
         goto continue
       end
-      local score = self.currentWidth * newHeight
+      local score = self.currentWidth * (height - cell.h)
       if edgeScore > score then
         edgeScore = score
         celledgeTbl = edgeTable
@@ -137,8 +138,8 @@ grid.insert = function(self, width, height, data)
     -- this case includes over hang
     elseif edgeTable.right and edgeTable.bottom and overhangRight > 0 and overhangBottom > 0 then -- corner
       -- limits
-      if self.currentWidth  + (width  - cell.w) > self.limitWidth or 
-         self.currentHeight + (height - cell.h) > self.limitHeight then
+      if cell.x + width > self.limitWidth or 
+         cell.y + height > self.limitHeight then
         goto continue
       end
       local totalArea = (width * height) - (cell.w * cell.h) -- cut out cell
@@ -151,6 +152,17 @@ grid.insert = function(self, width, height, data)
       end
     end
     ::continue::
+  end
+  
+    -- limits
+  local limitWidth = self.currentWidth + width > self.limitWidth and edgeScore > rightScore
+  local limitHeight = self.currentHeight + height > self.limitHeight and edgeScore > bottomScore
+  if limitHeight and limitWidth then
+    error("Could not fit all images within texture atlas. Failed inserting image ID: "..data.id)
+  elseif limitWidth then -- place bottom or edge
+      rightScore = edgeScore < bottomScore and edgeScore+1 or bottomScore + 1
+  elseif limitHeight then -- place right or edge
+      bottomScore = edgeScore < rightScore and edgeScore+1 or rightScore +1
   end
   
   -- Check cheapest direction
@@ -167,7 +179,7 @@ grid.insert = function(self, width, height, data)
         insert(self.unoccupiedCells, cell.new(unoccupiedCell.x, unoccupiedCell.y+height, width, unoccupiedCell.h-height))
       end
       if unoccupiedCell.y + unoccupiedCell.h < self.currentHeight then
-        insert(self.unoccupiedCells, cell.new(self.currentWidth, unoccupiedCell.y+unoccupiedCell.h, width-unoccupiedCell.w, self.currentHeight-(unoccupiedCell.y+unoccupiedCell.h), {0,0,1}))
+        insert(self.unoccupiedCells, cell.new(self.currentWidth, unoccupiedCell.y+unoccupiedCell.h, width-unoccupiedCell.w, self.currentHeight-(unoccupiedCell.y+unoccupiedCell.h)))
       end
       self.currentWidth = self.currentWidth + width - unoccupiedCell.w 
     end
@@ -199,18 +211,6 @@ grid.insert = function(self, width, height, data)
     end
   end
   
-  -- limits
-  local limitWidth = self.currentWidth + width > self.limitWidth
-  local limitHeight = self.currentHeight + height > self.limitHeight
-  if limitHeight and limitWidth then
-    error("Could not fit all images within texture atlas. Failed inserting image ID: "..data.id)
-    return false
-  elseif limitWidth then
-    rightScore = bottomScore + 1 -- place bottom
-  elseif limitHeight then
-    bottomScore = rightScore + 1 -- place right
-  end
-  
   -- add best new cells
   if bottomScore < rightScore then -- place bottom
     insert(self.cells, cell.new(0, self.currentHeight, width, height, data))
@@ -240,7 +240,6 @@ grid.insert = function(self, width, height, data)
     
     -- to solve: AABB - check if axis lines up so that they can be merged
     -- save time: Only call merge if unoccupied cells are created
-    
   return true
 end
 
